@@ -1,0 +1,256 @@
+Option Explicit
+Public Sub Circ_Log2()
+    
+    Const LOG_SHEET_NAME As String = "{ Circular Log }"    'Generated (and deleted) Log Worksheet name
+    Const LOG_TITLE_RANGE As String = "C2"              'Title cell
+    Const LOG_HEADER_RANGE As String = "C4"             'Log Header cell; Offset(1,0) for Log Body
+    
+    Dim wb As Excel.Workbook        'ActiveWorkbook
+    Dim ws As Excel.Worksheet       'Checked Sheet
+    Dim wsLog As Excel.Worksheet    'Error Log sheet
+    Dim rngUsed As Excel.Range      'Used range based on last used cell
+    Dim rng As Excel.Range          'current cell
+    Dim i As Long
+    Dim colWidth As Long
+    Dim lastRow As Long
+
+    Dim col As New Collection       'Collection of errors and error info
+    
+    Set wb = Excel.ActiveWorkbook   'Gets currently active workbook
+    
+    'DELETE EXISTING ERROR LOG IF PRESENT
+    ' - display alerts for deletion of old error log
+    On Error GoTo SheetDeleteError
+    With Excel.Application
+        .DisplayAlerts = False
+        .Calculation = xlCalculationManual
+        .ScreenUpdating = False
+    End With
+
+    ' - delete sheet
+    wb.Worksheets(LOG_SHEET_NAME).Delete
+SheetDeleteError:
+
+    ' - set everything back to normal
+    On Error GoTo 0
+    'On Error GoTo SubError
+    Excel.Application.DisplayAlerts = True
+    If Err.Number = 0 Then Debug.Print "..Successfully deleted old log '" & LOG_SHEET_NAME & "'"
+    
+    
+    'LOOP THROUGH WORKBOOK FOR ERRORS AND POPULATE COLLECTION
+    ' - Loop through each sheet excluding log sheet (if present) and any other user-specified sheets
+    For Each ws In wb.Worksheets
+        If ws.Name <> LOG_SHEET_NAME And ws.Name <> "Productivity Pack" And ws.Name <> "{ Error Log }" And ws.Name <> "{ Typo Log }" And ws.Name <> "{ Placeholder Log }" And ws.Name <> "{ Comment Log }" Then
+          
+            ' - Get actual used range
+            Set rngUsed = GetUsedRange(ws) '<- if this gives you problems, switch to "ws.UsedRange"
+            If Not rngUsed Is Nothing Then
+                
+                ' - Loop through each range, exclude an non-error
+                For Each rng In rngUsed
+                               
+                ' - 3.) Add any Circular References to collection
+                AddCircRefToCollection ws, col
+                Next
+            End If
+        End If
+    Next
+    
+    'BUILD AND FORMAT OUTPUT TABLE IF ERRORS WERE FOUND
+    If col.Count > 0 Then
+        
+        ' - Create new error log sheet (at this point old one has been deleted)
+        Set wsLog = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
+        wsLog.Name = LOG_SHEET_NAME
+        
+        ' - Add Headers
+        wsLog.Range(LOG_HEADER_RANGE).Resize(1, 5).Value2 = Array("Sheet Name", "Cell Location", "Error Type", "Reviewed?", "Notes")
+        ' - Loop through collection and populate data to sheet
+        colWidth = UBound(col.Item(1), 1) - LBound(col.Item(1), 1) + 1
+        With wsLog.Range(LOG_HEADER_RANGE)
+            For i = 1 To col.Count
+                
+                'Output values
+                .Offset(i, 0).Resize(1, colWidth).Value2 = col.Item(i)
+                .Offset(i, 0).Font.Name = "Arial"
+                .Offset(i, 0).Font.Size = 8
+                
+                'Output cell link
+                .Offset(i, 1).Hyperlinks.Add .Offset(i, 1), "", "'" & col.Item(i)(0) & "'!" & col.Item(i)(1), , col.Item(i)(1)
+                .Offset(i, 1).Font.Name = "Arial"
+                .Offset(i, 1).Font.Size = 8
+            
+            Next
+        End With
+        
+        'FORMAT ERROR LOG REPORT
+        With wsLog
+            ' - Resize Column widths (manual, but could use reference to LOG_HEADER_RANGE column etc)
+            .Columns("A:B").ColumnWidth = 3
+            .Columns("C").ColumnWidth = 20
+            .Columns("D:F").ColumnWidth = 12
+            .Columns("G").ColumnWidth = 100
+            .Columns("H:I").ColumnWidth = 3
+    
+            ' - Title & Formatting
+            With .Range(LOG_TITLE_RANGE)
+                .Value2 = "Circular Reference Log"
+                .Font.Name = "Arial"
+                .Font.Size = 20
+            End With
+            With .Range(LOG_TITLE_RANGE).Resize(1, 5)
+                .EntireRow.RowHeight = 26.25
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThick
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Font.Name = "Arial"
+                .Font.Size = 20
+                
+            End With
+            
+            ' - Header Formatting
+            With .Range(LOG_HEADER_RANGE).Resize(1, 5)
+                .Font.Bold = True
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Font.Name = "Arial"
+                .Font.Size = 8
+            End With
+                
+            ' - Body Formatting
+            With .Range(LOG_HEADER_RANGE).Offset(1, 0).Resize(col.Count, 1)
+                ' - ErrorType
+                .Offset(0, 2).HorizontalAlignment = xlLeft
+                .Offset(0, 2).Font.Name = "Arial"
+                .Offset(0, 2).Font.Size = 8
+                
+                ' - Reviewed? | Notes
+                With .Offset(0, 3).Resize(, 2)
+                    .Interior.Pattern = xlSolid
+                    .Font.Color = "16711680"
+                    .Interior.Color = "6750207"
+                    .Font.Name = "Arial"
+                    .Font.Size = 8
+                End With
+            End With
+            
+            .UsedRange.EntireRow.AutoFit
+            .Columns("J:XFD").Hidden = True
+            .Activate
+            .Rows(5).Select
+            Excel.ActiveWindow.DisplayGridlines = False
+            Excel.ActiveWindow.FreezePanes = True
+        End With
+    End If
+
+SubError:
+
+    ' - Return app settings to original values
+    With Excel.Application
+        .DisplayAlerts = True
+        .Calculation = xlCalculationSemiautomatic
+        .ScreenUpdating = True
+    End With
+    
+    ' - Output done message or error
+    If Err.Number = 0 Then
+        If wsLog Is Nothing Then
+            MsgBox "Done! Nothing to report."
+        Else
+            MsgBox "Done! Circular reference log generated."
+        End If
+    Else
+        Err.Raise Err.Number, , Err.Description
+    End If
+    
+End Sub
+Public Function GetUsedRange(ByRef ws As Excel.Worksheet) As Excel.Range
+    
+    'TODO:
+    ' - Range of used data.  Worksheet.UsedRange can sometimes include massive amounts of empty ranges causing slowness in rng loop.
+    '   this should help tamp down the serached area to only the cells it needs to.  If this doesnt work, remove function altogether
+    '   and use ws.UsedRange as you were before.
+    
+    Dim row_start As Long
+    Dim row_end As Long
+    Dim col_start As Long
+    Dim col_end As Long
+
+    On Error GoTo funcError
+
+    With ws.UsedRange.Cells(1, 1)
+        row_start = .Row
+        col_start = .Column
+    End With
+    
+    row_end = ws.Cells.Find( _
+        What:="*", _
+        After:=ws.Cells(row_start, col_start), _
+        LookAt:=xlPart, _
+        LookIn:=xlFormulas, _
+        SearchOrder:=xlByRows, _
+        SearchDirection:=xlPrevious, _
+        MatchCase:=False _
+        ).Row
+        
+    col_end = ws.Cells.Find( _
+        What:="*", _
+        After:=ws.Cells(row_start, col_start), _
+        LookAt:=xlPart, _
+        LookIn:=xlFormulas, _
+        SearchOrder:=xlByColumns, _
+        SearchDirection:=xlPrevious, _
+        MatchCase:=False _
+        ).Column
+        
+    Set GetUsedRange = ws.Range(ws.Cells(row_start, col_start), ws.Cells(row_end, col_end))
+    
+    Exit Function
+    
+funcError:
+
+    ' - If the above code errors, it usually means there is no data to search (empty sheet). If this happens,
+    '   return nothing and handle in main code body
+    
+    Set GetUsedRange = Nothing
+    
+End Function
+Private Sub AddCircRefToCollection(ByRef ws As Excel.Worksheet, ByRef col As Collection)
+    
+    'Source: https://stackoverflow.com/questions/67896589/is-there-a-way-to-identify-all-circular-reference-in-excel-via-vba
+
+    Dim rFormula As Range
+    Dim rPrecedents As Range
+    Dim rCircular As Range
+    Dim rCell As Range
+    
+    ' only consider cells with formulas
+    On Error Resume Next
+    Set rFormula = ws.Cells.SpecialCells(xlCellTypeFormulas)
+    On Error GoTo 0
+    
+    If Not rFormula Is Nothing Then
+        
+        ' loop as Formula cells
+        For Each rCell In rFormula
+            ' Check if Formula references any cells
+            Set rPrecedents = Nothing
+            On Error Resume Next
+            Set rPrecedents = rCell.Precedents
+            On Error GoTo 0
+            If Not rPrecedents Is Nothing Then
+                
+                ' if Precenents includes rcell, then its circular
+                Set rCircular = Nothing
+                Set rCircular = Application.Intersect(rPrecedents, rCell)
+                If Not rCircular Is Nothing Then
+                    Debug.Print rCircular.Address
+                    ' Add rCircular.Address to your array here
+                    '...
+                    col.Add Array(ws.Name, rCircular.Address(True, True), "#CIRC")
+                End If
+            End If
+        Next
+    End If
+End Sub
